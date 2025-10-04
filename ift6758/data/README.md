@@ -1,6 +1,6 @@
 # Données
 
-La classe _NHLDataLoader_ est utilisée pour récupérer les données et la classes _StorageData_ pour les stocker. 
+La classe 'NHLDataLoader' est utilisée pour récupérer les données et la classes _StorageData_ pour les stocker. 
 
 Deux types de données sont enregistrés : le _interm_ (stockage temporaire) et le _final_ (sauvegarde finale).
 
