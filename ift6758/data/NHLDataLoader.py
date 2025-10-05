@@ -1,167 +1,24 @@
-# Importer les librairies
-import requests
-import json
-from .enums import GameType
-from .Cache import Cache
+from .ApiClient import ApiClient
+from .FileSystemCache import FileSystemCache
 
-
-# 1. Identifiants
-
-# 1.1 Construire un identifiant ID pour chaque match
-def get_game_id(season: int, game_type: str, game_number: int) -> str:
-    return str(season) + game_type + ('%04d' % game_number)
-
-# 1.2 Calculer la lettre de playoffs
-def get_series_letter(round: int, series: int) -> str:
-    round_base_index = 0
-    for i in range(1, round):
-        round_base_index += 2 ** (4 - i)
-    letter_index = round_base_index + series
-    series_letter = chr(64 + letter_index)
-    return series_letter
-
-# 2. Accéder au API du NHL
-
-# 2.1 Définir la classe et les URL
 class NHLDataLoader:
-    # URL pour les différentes API
-    games_base_url = "https://api-web.nhle.com/v1"
-    stats_base_url = "https://api.nhle.com/stats/rest/en"
+    def __init__(self, cache=None):
+        self.api = ApiClient()
+        self.cache = cache or FileSystemCache()
 
-    # 2.2 Initialiser les cache
-    def __init__(self, cache: Cache = None):
-        self.cache = cache
+    def fetch_game(self, game_id: str) -> dict:
+        cached = self.cache.get(game_id)
+        if cached: return cached
+        data = self.api.get_feed_live(game_id)
+        self.cache.set(game_id, data)
+        self.cache.dump(game_id, data)
+        return data
 
-    # 2.3 Récupérer toutes les données de matchs pour une saison 
-    def get_games_data(self, season: int, game_types: list[str]) -> list[dict] :
-        
-        games = []
-
-        for game_type in game_types:
-            game_numbers = self.get_game_numbers_in_season(season, game_type)
-            
-            if game_numbers is None or len(game_numbers) == 0:
-                print("[NHLDataLoader.get_games_data] No games for season %d and type %s" % (season, game_type))
+    def fetch_season(self, season_start_year: int, game_type: str, max_games=1320):
+        for n in range(1, max_games+1):
+            gid = f"{season_start_year}{game_type}{n:04d}"
+            try:
+                self.fetch_game(gid)
+            except Exception:
+                # s'il n'y a plus de matchs valides, on “tombe dans le vide” et continue
                 continue
-
-            print("[NHLDataLoader.get_games_data] Found %d games for season %d and type %s" % (len(game_numbers), season, game_type))
-
-            for game_number in game_numbers:
-                game_id = get_game_id(season, game_type, game_number)
-                game_data = self.get_game_data(game_id)
-                games.append(game_data)
-
-        print(f"Found {len(games)} games of type {game_types} for season {season}")
-
-        return games
-     # 2.4 Récupérer les détails play-by-play d’un match
-    def get_game_data(self, game_id: str) -> object:
-        uri = f"/gamecenter/{game_id}/play-by-play"
-        return self.fetch_from_url_and_cache(self.games_base_url, uri, "games/")
-
-    # 2.5 Lister les numéros de matchs d’une saison par type
-    def get_game_numbers_in_season(self, season: int, game_type: str) -> None | list[int]:
-    
-        season_data = self.get_season_data(season)
-
-        if season_data is None:
-            print("[ApiClient.get_game_count_in_season] Season '%d' not found" % season)
-            return None
-
-        if game_type == GameType.REGULAR:
-            max_number = int(season_data["totalRegularSeasonGames"])
-            return list(range(1, max_number + 1))
-        elif game_type == GameType.PLAYOFF:
-            return self.get_playoff_games_number(season)
-        else:
-            raise Exception("Game type '%s' not recognized" % game_type)
-            
-    # 2.6 Calculer la liste des numéros de matchs de playoffs (RSG)
-    def get_playoff_games_number(self, season: int) -> list[int]:
-        playoff_series = self.get_playoff_series(season)
-
-        def get_game_count_for_series(round: int, series: int) -> int:
-            """
-            Get the number of games for a specific series
-            """
-            # Compute the letter of the series
-            series_letter = get_series_letter(round, series)
-            # Found in https://www.geeksforgeeks.org/python-find-dictionary-matching-value-in-list/
-            r = next((r for r in playoff_series["rounds"] if r["roundNumber"] == round), None)
-            s = next((s for s in r["series"] if s["seriesLetter"] == series_letter), None)
-
-            # Add the number of wins for the top and bottom
-            return s["bottomSeed"]["wins"] + s["topSeed"]["wins"]
-
-        numbers = list()
-
-        # TODO: Could be done with numpy ?
-        for round in range(1,5):
-            series_count = 2 ** (4 - round)
-            for series in range(1, series_count+1):
-                games_count = get_game_count_for_series(round, series)
-                for game in range(1, games_count+1):
-                    numbers.append(int(f"{round}{series}{game}"))
-
-        return numbers
-    #  2.7 Récupérer la structure du bracket des playoffs
-    def get_playoff_series(self, season: int) -> dict[str | int] | None:
-        """
-        Get the playoff brackets details for a given season
-        https://api-web.nhle.com/v1/playoff-series/carousel/20232024/
-        """
-        uri = "/playoff-series/carousel/" + str(season) + str(season + 1) + "/"
-        return self.fetch_from_url_and_cache(self.games_base_url, uri, "games/")
-
-    # 2.8 Récupérer les métadonnées d’une saison
-    def get_season_data(self, season: int) -> dict[str | int] | None:
-        """
-        Get the season data from a specific season
-        Args:
-            season: First year of the season to retrieve, i.e. for the 2016-2017 season you'd put in 2016
-        """
-        all_seasons_data = self.get_seasons_data()
-
-        season_id = str(season) + str(season + 1)
-
-        for season_data in all_seasons_data:
-            if str(season_data["id"]) == season_id:
-                return season_data
-
-        return None
-
-    # 2.9 Lister toutes les saisons (avec cache)
-    def get_seasons_data(self) -> list[dict[str | int]]:
-        """
-        Get data from all seasons.
-        Keep results in cache
-        """
-        return self.fetch_from_url_and_cache(self.stats_base_url, "/season", "stats/")["data"]
-
-     # 2.10 Outil générique : accès HTTP + cache
-    def fetch_from_url_and_cache(self, base_url: str, uri: str, cache_prefix: str) -> dict[str | int] | None:
-        """
-        Fetch data from an API URL and cache it
-        """
-        cache_key = cache_prefix + uri
-
-        # Try to get result from cache
-        if self.cache is not None:
-            value = self.cache.get(cache_key)
-            if value is not None:
-                print(f"[ApiClient.fetch_from_url_and_cache] Loaded '{uri}' from cache")
-                return json.loads(value)
-
-        # Get content from API or raise an error
-        full_url = base_url + uri
-        response = requests.get(full_url)
-        response.raise_for_status()
-        text = response.text
-
-        print(f"[ApiClient.fetch_from_url_and_cache] Loaded '{uri}' from API")
-
-        # Store the content if cache is enabled
-        if self.cache is not None:
-            self.cache.set(cache_key, text)
-
-        return json.loads(text)
