@@ -5,8 +5,8 @@ from ipywidgets import interact, IntSlider, Dropdown, ToggleButtons, VBox, HBox
 from ift6758.data.data_acquisition import NHLDataLoader
 
 # Chemins
-DUMP_DIR  = Path("ift6758/data/storage/dump")
-RINK_IMG  = Path("rink.png") 
+DUMP_DIR  = Path("IFT6758-Projet/data/storage/dump")
+RINK_IMG  = Path("IFT6758-Projet/figures/nfl_rink.png") 
 loader    = NHLDataLoader()
 
 def make_game_id(season_start_year: int, game_type: str, game_number: int) -> str:
