@@ -1,195 +1,106 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
-# Imports de base
-from ift6758.data.data_acquisition import NHLDataLoader
-import json, os
 from pathlib import Path
+import json
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from ipywidgets import interact, fixed, IntSlider, Dropdown, ToggleButtons, VBox, HBox
-import os; print('cwd =', os.getcwd())
-
-
-# In[ ]:
-
+from ipywidgets import interact, IntSlider, Dropdown, ToggleButtons, VBox, HBox
+from ift6758.data.data_acquisition import NHLDataLoader
 
 # Chemins
-DUMP_DIR = Path('ift6758/data/storage/dump')
-ASSETS_DIR = Path('assets')
-RINK_IMG = ASSETS_DIR / 'rink.png'
-ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+DUMP_DIR  = Path("ift6758/data/storage/dump")
+RINK_IMG  = Path("rink.png") 
+loader    = NHLDataLoader()
 
 def make_game_id(season_start_year: int, game_type: str, game_number: int) -> str:
-    """Construit GAME_ID = YYYY + game_type (02 ou 03) + ####"""
     return f"{season_start_year}{game_type}{game_number:04d}"
 
 def load_local_game_json(game_id: str):
-    path = DUMP_DIR / f"{game_id}.json"
-    if path.exists():
-        with open(path) as f:
+    p = DUMP_DIR / f"{game_id}.json"
+    if p.exists():
+        with open(p) as f: 
             return json.load(f)
     return None
 
-
-# In[ ]:
-
-
-# Création d'une image de patinoire "placeholder" si assets/rink.png est absent.
-# Pour rester simple, on crée une image blanche sur laquelle on placera le point.
-import numpy as np
-if not RINK_IMG.exists():
-    h, w = 400, 800
-    img = np.ones((h, w, 3), dtype=np.float32)  # blanc
-    # Sauvegarde via matplotlib (aucun style/couleur spécifique défini)
-    plt.figure(figsize=(8, 4))
-    plt.imshow(img)
-    plt.axis('off')
-    plt.savefig(RINK_IMG, bbox_inches='tight', pad_inches=0)
-    plt.close()
-RINK_IMG
-
-
-# In[ ]:
-
-
-# Fonctions d'accès et de parsing des événements
-def get_events(data: dict):
+def get_events(feed: dict):
     try:
-        return data["liveData"]["plays"]["allPlays"]
+        return feed["liveData"]["plays"]["allPlays"]
     except Exception:
         return []
 
 def parse_event(evt: dict):
-    res = {}
-    res["eventType"] = evt.get("result", {}).get("eventTypeId")
-    res["description"] = evt.get("result", {}).get("description")
-    about = evt.get("about", {})
-    res["period"] = about.get("period")
-    res["periodTime"] = about.get("periodTime")
-    coords = evt.get("coordinates", {})
-    res["x"] = coords.get("x", None)
-    res["y"] = coords.get("y", None)
-    team = evt.get("team", {})
-    res["team"] = team.get("name") if isinstance(team, dict) else None
-    res["shotType"] = evt.get("result", {}).get("secondaryType")
-    res["isGoal"] = (res["eventType"] == "GOAL")
-    return res
+    r = {}
+    r["eventType"]  = evt.get("result", {}).get("eventTypeId")
+    r["description"]= evt.get("result", {}).get("description")
+    r["period"]     = evt.get("about", {}).get("period")
+    r["periodTime"] = evt.get("about", {}).get("periodTime")
+    r["x"]          = evt.get("coordinates", {}).get("x")
+    r["y"]          = evt.get("coordinates", {}).get("y")
+    r["team"]       = (evt.get("team", {}) or {}).get("name")
+    r["shotType"]   = evt.get("result", {}).get("secondaryType")
+    r["isGoal"]     = (r["eventType"] == "GOAL")
+    return r
 
-
-# In[ ]:
-
-
-# Affichage d'un événement et tracé sur la patinoire
-
-# Widgets interactifs
-loader = NHLDataLoader()
-
-seasons = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
-w_season = Dropdown(options=seasons, value=2017, description='Saison')
-w_type   = ToggleButtons(options=[('Régulière','02'), ('Séries','03')],
-                         value='02', description='Type')
-w_num    = IntSlider(value=1, min=1, max=1320, step=1, description='Match #', continuous_update=False)
-w_idx    = IntSlider(value=0, min=0, max=50, step=1, description='Événement', continuous_update=False)
-
-def _load_game_data(season, gtype, gnum):
-    gid = make_game_id(season, gtype, gnum)
-    data = load_local_game_json(gid)
-    if data is None:
-        try:
-            data = loader.fetch_game(gid)
-        except Exception as e:
-            print(f"Échec téléchargement {gid}: {e}")
-            return gid, None, []
-    evts = get_events(data)
-    return gid, data, evts
-
-def update(season, gtype, gnum, idx):
-    gid, data, evts = _load_game_data(season, gtype, gnum)
-    print(f"GAME_ID = {gid}  |  #événements = {len(evts)}")
-    if not evts:
-        print("Aucun événement disponible (match inexistant, pas encore joué, ou erreur réseau).")
-        return
-    w_idx.max = max(0, len(evts)-1)
-    evt = parse_event(evts[min(idx, len(evts)-1)])
-    show_event_info(evt)
-    plot_on_rink(evt["x"], evt["y"]) 
-
-ui = VBox([HBox([w_season, w_type, w_num]), w_idx])
-out = interact(update, season=w_season, gtype=w_type, gnum=w_num, idx=w_idx)
-ui
-def show event_info(res: dict):
+def show_event_info(info: dict):
     lines = [
-        f"[{res.get('period','?')}] {res.get('periodTime','??:??')}",
-        f"{res.get('eventType','?')}: {res.get('description','')}",
-        f"Équipe: {res.get('team','?')}"
+        f"[{info.get('period','?')}] {info.get('periodTime','??:??')}",
+        f"{info.get('eventType','?')}: {info.get('description','')}",
+        f"Équipe: {info.get('team','?')}"
     ]
-    if res.get("shotType"): lines.append(f"Type de tir: {res['shotType']}")
-    if res.get("isGoal"):   lines.append("BUT !")
+    if info.get("shotType"): lines.append(f"Type de tir: {info['shotType']}")
+    if info.get("isGoal"):   lines.append("BUT !")
     print("\n".join(lines))
 
+# Patinoire dessin si le fichier ne fonctionne pas -> à effacer?
 def plot_on_rink(x, y):
-    img = mpimg.imread(RINK_IMG)
-    plt.figure(figsize=(8, 4))
-    plt.imshow(img)
-    plt.axis('off')
-    h, w = img.shape[0], img.shape[1]
-    # Mapping simple des coords NHL (x ∈ [-100,100], y ∈ [-42.5,42.5]) aux pixels
-    # Note: ceci est un mapping linéaire approximatif pour le débogage interactif
+    fig = plt.figure(figsize=(8, 4))
+    ax  = plt.gca()
+    try:
+        img = plt.imread(RINK_IMG)
+        ax.imshow(img)
+        h, w = img.shape[0], img.shape[1]
+    except Exception:
+        h, w = 400, 800
+        ax.imshow([[1,1],[1,1]])
+        ax.set_xlim(0, w); ax.set_ylim(h, 0)
+
+    ax.axis("off")
     if x is not None and y is not None:
-        # Convertir en [0,1]
-        xn = (x + 100.0) / 200.0
-        yn = (y + 42.5) / 85.0
-        px = xn * w
-        # Les y pixels augmentent vers le bas, donc on inverse
-        py = (1 - yn) * h
-        plt.scatter([px], [py], s=80)
-        plt.title(f"(x={x}, y={y})")
+        # Conversion coords NHL
+        px = ((x + 100.0) / 200.0) * w
+        py = (1.0 - ((y + 42.5) / 85.0)) * h
+        ax.scatter([px], [py], s=80)
+        ax.set_title(f"(x={x}, y={y})")
     else:
-        plt.title("Pas de coordonnées pour cet événement")
+        ax.set_title("Pas de coordonnées pour cet événement.")
     plt.show()
 
-
-# In[ ]:
-
-
-# Widgets interactifs
-loader = NHLDataLoader()
-
+# widgets
 seasons = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
-w_season = Dropdown(options=seasons, value=2017, description='Saison')
-w_type   = ToggleButtons(options=[('Régulière','02'), ('Séries','03')],
-                         value='02', description='Type')
-w_num    = IntSlider(value=1, min=1, max=1320, step=1, description='Match #', continuous_update=False)
-w_idx    = IntSlider(value=0, min=0, max=50, step=1, description='Événement', continuous_update=False)
+w_season = Dropdown(options=seasons, value=2017, description="Saison")
+w_type   = ToggleButtons(options=[("Régulière","02"), ("Séries","03")], value="02", description="Type")
+w_num    = IntSlider(value=1, min=1, max=1320, step=1, description="Match #", continuous_update=False)
+w_idx    = IntSlider(value=0, min=0, max=50, step=1, description="Événement", continuous_update=False)
 
-def _load_game_data(season, gtype, gnum):
-    gid = make_game_id(season, gtype, gnum)
+def _load_game(season, gtype, gnum):
+    gid  = make_game_id(season, gtype, gnum)
     data = load_local_game_json(gid)
     if data is None:
         try:
             data = loader.fetch_game(gid)
-        except Exception as e:
-            print(f"Échec téléchargement {gid}: {e}")
-            return gid, None, []
-    evts = get_events(data)
-    return gid, data, evts
+        except Exception:
+            return gid, []
+    return gid, get_events(data)
 
-def update(season, gtype, gnum, idx):
-    gid, data, evts = _load_game_data(season, gtype, gnum)
-    print(f"GAME_ID = {gid}  |  #événements = {len(evts)}")
+def _update(season, gtype, gnum, idx):
+    gid, evts = _load_game(season, gtype, gnum)
+    print(f"GAME_ID = {gid} | #événements = {len(evts)}")
     if not evts:
-        print("Aucun événement disponible (match inexistant, pas encore joué, ou erreur réseau).")
+        print("Aucun événement disponible.")
         return
-    w_idx.max = max(0, len(evts)-1)
+    w_idx.max = max(0, len(evts) - 1)
     evt = parse_event(evts[min(idx, len(evts)-1)])
     show_event_info(evt)
-    plot_on_rink(evt["x"], evt["y"]) 
+    plot_on_rink(evt["x"], evt["y"])
 
+# Affichage
 ui = VBox([HBox([w_season, w_type, w_num]), w_idx])
-out = interact(update, season=w_season, gtype=w_type, gnum=w_num, idx=w_idx)
-ui
-
+display(ui)
+interact(_update, season=w_season, gtype=w_type, gnum=w_num, idx=w_idx);
