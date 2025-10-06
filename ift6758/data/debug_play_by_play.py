@@ -11,15 +11,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from ipywidgets import interact, fixed, IntSlider, Dropdown, ToggleButtons, VBox, HBox
-
-# Vérifier le dossier courant (doit être la racine du repo pour que l'import ift6758 fonctionne)
 import os; print('cwd =', os.getcwd())
 
 
 # In[ ]:
 
 
-# Chemins et utilitaires
+# Chemins
 DUMP_DIR = Path('ift6758/data/storage/dump')
 ASSETS_DIR = Path('assets')
 RINK_IMG = ASSETS_DIR / 'rink.png'
@@ -85,8 +83,45 @@ def parse_event(evt: dict):
 # In[ ]:
 
 
-# Affichage d'un événement (texte) et tracé du point sur la patinoire
-def show_event_info(res: dict):
+# Affichage d'un événement et tracé sur la patinoire
+
+# Widgets interactifs
+loader = NHLDataLoader()
+
+seasons = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023]
+w_season = Dropdown(options=seasons, value=2017, description='Saison')
+w_type   = ToggleButtons(options=[('Régulière','02'), ('Séries','03')],
+                         value='02', description='Type')
+w_num    = IntSlider(value=1, min=1, max=1320, step=1, description='Match #', continuous_update=False)
+w_idx    = IntSlider(value=0, min=0, max=50, step=1, description='Événement', continuous_update=False)
+
+def _load_game_data(season, gtype, gnum):
+    gid = make_game_id(season, gtype, gnum)
+    data = load_local_game_json(gid)
+    if data is None:
+        try:
+            data = loader.fetch_game(gid)
+        except Exception as e:
+            print(f"Échec téléchargement {gid}: {e}")
+            return gid, None, []
+    evts = get_events(data)
+    return gid, data, evts
+
+def update(season, gtype, gnum, idx):
+    gid, data, evts = _load_game_data(season, gtype, gnum)
+    print(f"GAME_ID = {gid}  |  #événements = {len(evts)}")
+    if not evts:
+        print("Aucun événement disponible (match inexistant, pas encore joué, ou erreur réseau).")
+        return
+    w_idx.max = max(0, len(evts)-1)
+    evt = parse_event(evts[min(idx, len(evts)-1)])
+    show_event_info(evt)
+    plot_on_rink(evt["x"], evt["y"]) 
+
+ui = VBox([HBox([w_season, w_type, w_num]), w_idx])
+out = interact(update, season=w_season, gtype=w_type, gnum=w_num, idx=w_idx)
+ui
+def show event_info(res: dict):
     lines = [
         f"[{res.get('period','?')}] {res.get('periodTime','??:??')}",
         f"{res.get('eventType','?')}: {res.get('description','')}",
